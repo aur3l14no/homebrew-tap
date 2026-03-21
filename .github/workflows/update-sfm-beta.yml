@@ -1,0 +1,56 @@
+name: Update sfm-beta
+
+on:
+  schedule:
+    - cron: "0 */6 * * *" # every 6 hours
+  workflow_dispatch:
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for new pre-release
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Get latest pre-release tag matching alpha/beta/rc pattern
+          latest=$(gh release list --repo SagerNet/sing-box --limit 20 --json tagName,isPrerelease \
+            -q '[.[] | select(.isPrerelease)] | .[0].tagName' | sed 's/^v//')
+
+          current=$(grep -oP 'version "\K[^"]+' Casks/sfm-beta.rb)
+
+          echo "latest=$latest" >> "$GITHUB_OUTPUT"
+          echo "current=$current" >> "$GITHUB_OUTPUT"
+
+          if [ "$latest" = "$current" ]; then
+            echo "up_to_date=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "up_to_date=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Update cask
+        if: steps.check.outputs.up_to_date == 'false'
+        env:
+          VERSION: ${{ steps.check.outputs.latest }}
+        run: |
+          url="https://github.com/SagerNet/sing-box/releases/download/v${VERSION}/SFM-${VERSION}-Universal.pkg"
+          sha256=$(curl -sL "$url" | shasum -a 256 | awk '{print $1}')
+
+          sed -i "s/version \".*\"/version \"${VERSION}\"/" Casks/sfm-beta.rb
+          sed -i "s/sha256 \".*\"/sha256 \"${sha256}\"/" Casks/sfm-beta.rb
+
+      - name: Commit and push
+        if: steps.check.outputs.up_to_date == 'false'
+        env:
+          VERSION: ${{ steps.check.outputs.latest }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Casks/sfm-beta.rb
+          git commit -m "Update sfm-beta to ${VERSION}"
+          git push
